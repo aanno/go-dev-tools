@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -17,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/olekukonko/tablewriter"
 	"gopkg.in/yaml.v3"
@@ -149,6 +149,13 @@ func main() {
 		log.Fatalf("Failed to open repo: %v", err)
 	}
 
+	// Get repo root
+	worktree, err := repo.Worktree()
+	if err != nil {
+		log.Fatalf("Failed to get worktree: %v", err)
+	}
+	repoRoot := worktree.Filesystem.Root()
+
 	// Walk and collect files
 	files := make(chan string, 100)
 	var wg sync.WaitGroup
@@ -189,7 +196,7 @@ func main() {
 		go func() {
 			defer processWg.Done()
 			for path := range files {
-				stat := processFile(repo, path, fromCommit, toCommit, mode, authorMerger)
+				stat := processFile(repo, path, repoRoot, fromCommit, toCommit, mode, authorMerger)
 				if stat != nil {
 					statsChan <- *stat
 				}
@@ -318,7 +325,7 @@ func detectLanguage(path string) string {
 	return "other"
 }
 
-func processFile(repo *git.Repository, path string, fromCommit, toCommit string, mode string, merger *AuthorMerger) *FileStats {
+func processFile(repo *git.Repository, path string, repoRoot string, fromCommit, toCommit string, mode string, merger *AuthorMerger) *FileStats {
 	// Count lines
 	lines, err := countLines(path)
 	if err != nil {
@@ -331,7 +338,7 @@ func processFile(repo *git.Repository, path string, fromCommit, toCommit string,
 	}
 
 	// Get author
-	author := getAuthor(repo, path, fromCommit, toCommit, mode)
+	author := getAuthor(repo, path, repoRoot, fromCommit, toCommit, mode)
 	author = merger.Canonicalize(author)
 
 	// Categorize
@@ -398,13 +405,9 @@ func countLines(path string) (int, error) {
 	return lines, nil
 }
 
-func getAuthor(repo *git.Repository, path string, fromCommit, toCommit string, mode string) string {
-	worktree, err := repo.Worktree()
-	if err != nil {
-		return "unknown"
-	}
-
-	relPath, err := filepath.Rel(worktree.Filesystem.Root(), path)
+func getAuthor(repo *git.Repository, path string, repoRoot string, fromCommit, toCommit string, mode string) string {
+	// Get relative path from repo root
+	relPath, err := filepath.Rel(repoRoot, path)
 	if err != nil {
 		relPath = path
 	}
@@ -413,41 +416,26 @@ func getAuthor(repo *git.Repository, path string, fromCommit, toCommit string, m
 	relPath = filepath.ToSlash(relPath)
 
 	if mode == "snapshot" {
-		return getAuthorBlame(repo, relPath)
+		return getAuthorBlame(repoRoot, relPath)
 	}
 
 	return getAuthorRange(repo, relPath, fromCommit, toCommit)
 }
 
-func getAuthorBlame(repo *git.Repository, path string) string {
-	head, err := repo.Head()
+func getAuthorBlame(repoRoot string, path string) string {
+	// Use git blame CLI (most reliable)
+	cmd := exec.Command("git", "-C", repoRoot, "blame", "--line-porcelain", path)
+	output, err := cmd.Output()
 	if err != nil {
-		return "unknown"
-	}
-
-	commit, err := repo.CommitObject(head.Hash())
-	if err != nil {
-		return "unknown"
-	}
-
-	// Try to get the file
-	_, err = commit.File(path)
-	if err != nil {
-		log.Printf("Warning: cannot get file %s from commit %s: %v", path, head.Hash(), err)
-		return "unknown"
-	}
-
-	// Use git annotate (same as blame)
-	annotate, err := repo.Annotate(path)
-	if err != nil {
-		log.Printf("Warning: annotate failed for %s: %v (falling back to log)", path, err)
-		return getAuthorFromLog(repo, path, "", "")
+		log.Printf("Warning: git blame failed for %s: %v (falling back to log)", path, err)
+		return getAuthorFromLogSimple(repoRoot, path)
 	}
 
 	authorCounts := make(map[string]int)
-	for _, line := range annotate.Lines {
-		if line.Author != "" {
-			authorCounts[line.Author]++
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "author ") {
+			author := strings.TrimPrefix(line, "author ")
+			authorCounts[author]++
 		}
 	}
 
@@ -461,14 +449,21 @@ func getAuthorRange(repo *git.Repository, path string, fromHash, toHash string) 
 func getAuthorFromLog(repo *git.Repository, path string, fromHash, toHash string) string {
 	authorCounts := make(map[string]int)
 
-	iter, err := repo.Log(&git.LogOptions{})
+	head, err := repo.Head()
+	if err != nil {
+		return "unknown"
+	}
+
+	iter, err := repo.Log(&git.LogOptions{
+		From: head.Hash(),
+	})
 	if err != nil {
 		log.Printf("Warning: log failed for %s: %v", path, err)
 		return "unknown"
 	}
 
-	_ = iter.ForEach(func(c *object.Commit) error {
-		patch, err := c.PatchContext(context.Background())
+	err = iter.ForEach(func(c *object.Commit) error {
+		patch, err := c.PatchContext(context.Background(), c)
 		if err != nil {
 			return nil
 		}
@@ -482,6 +477,28 @@ func getAuthorFromLog(repo *git.Repository, path string, fromHash, toHash string
 		}
 		return nil
 	})
+
+	if err != nil {
+		log.Printf("Warning: error iterating log: %v", err)
+	}
+
+	return getTopAuthor(authorCounts)
+}
+
+func getAuthorFromLogSimple(repoRoot string, path string) string {
+	// Fallback: use git log CLI
+	cmd := exec.Command("git", "-C", repoRoot, "log", "--format=%an", "--", path)
+	output, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+
+	authorCounts := make(map[string]int)
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.TrimSpace(line) != "" {
+			authorCounts[line]++
+		}
+	}
 
 	return getTopAuthor(authorCounts)
 }
@@ -780,4 +797,3 @@ func outputTable(stats *AggregatedStats) {
 	// Total
 	fmt.Printf("\n## Total Lines: %d\n", stats.Total.Lines)
 }
-
