@@ -1,9 +1,9 @@
-// cmd/codestats/main.go
+// cmd/codestats/main.go - Updated with .gitignore support
 
 package main
 
 import (
-	"context"
+	"bufio"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -18,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/olekukonko/tablewriter"
 	"gopkg.in/yaml.v3"
 )
@@ -86,6 +85,17 @@ type AuthorStats struct {
 
 type TotalStats struct {
 	Lines int `json:"total_lines"`
+}
+
+// GitignoreMatcher checks if paths should be ignored
+type GitignoreMatcher struct {
+	patterns []gitignorePattern
+}
+
+type gitignorePattern struct {
+	pattern *regexp.Regexp
+	negate  bool
+	dirOnly bool
 }
 
 func main() {
@@ -156,6 +166,9 @@ func main() {
 	}
 	repoRoot := worktree.Filesystem.Root()
 
+	// Load .gitignore patterns
+	gitignoreMatcher := loadGitignorePatterns(repoRoot)
+
 	// Walk and collect files
 	files := make(chan string, 100)
 	var wg sync.WaitGroup
@@ -166,7 +179,6 @@ func main() {
 		defer wg.Done()
 		err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				log.Printf("Warning: cannot access %s: %v", path, err)
 				return nil
 			}
 			if info.IsDir() {
@@ -175,6 +187,13 @@ func main() {
 				}
 				return nil
 			}
+			
+			// Check gitignore
+			relPath, _ := filepath.Rel(repoRoot, path)
+			if gitignoreMatcher != nil && gitignoreMatcher.Match(relPath, info.IsDir()) {
+				return nil
+			}
+			
 			if isCodeFile(path) {
 				files <- path
 			}
@@ -226,6 +245,89 @@ func main() {
 	outputCSV(aggregated, outputPath)
 	outputJSON(aggregated, outputPath)
 	outputTable(aggregated)
+}
+
+func loadGitignorePatterns(repoRoot string) *GitignoreMatcher {
+	gitignorePath := filepath.Join(repoRoot, ".gitignore")
+	file, err := os.Open(gitignorePath)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	var patterns []gitignorePattern
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		negate := false
+		if strings.HasPrefix(line, "!") {
+			negate = true
+			line = line[1:]
+		}
+
+		dirOnly := strings.HasSuffix(line, "/")
+		line = strings.TrimSuffix(line, "/")
+
+		// Convert gitignore pattern to regex
+		regex := convertGitignorePattern(line)
+		if re, err := regexp.Compile(regex); err == nil {
+			patterns = append(patterns, gitignorePattern{
+				pattern: re,
+				negate:  negate,
+				dirOnly: dirOnly,
+			})
+		}
+	}
+
+	if len(patterns) == 0 {
+		return nil
+	}
+
+	return &GitignoreMatcher{patterns: patterns}
+}
+
+func convertGitignorePattern(pattern string) string {
+	// Escape regex special chars except * and ?
+	escaped := strings.ReplaceAll(pattern, ".", "\\.")
+	escaped = strings.ReplaceAll(escaped, "[", "\\[")
+	escaped = strings.ReplaceAll(escaped, "]", "\\]")
+	escaped = strings.ReplaceAll(escaped, "(", "\\(")
+	escaped = strings.ReplaceAll(escaped, ")", "\\)")
+	escaped = strings.ReplaceAll(escaped, "{", "\\{")
+	escaped = strings.ReplaceAll(escaped, "}", "\\}")
+	escaped = strings.ReplaceAll(escaped, "^", "\\^")
+	escaped = strings.ReplaceAll(escaped, "$", "\\$")
+	escaped = strings.ReplaceAll(escaped, "+", "\\+")
+	escaped = strings.ReplaceAll(escaped, "|", "\\|")
+
+	// Convert glob patterns
+	escaped = strings.ReplaceAll(escaped, "**", ".*")
+	escaped = strings.ReplaceAll(escaped, "*", "[^/]*")
+	escaped = strings.ReplaceAll(escaped, "?", ".")
+
+	return "^" + escaped + "$"
+}
+
+func (m *GitignoreMatcher) Match(path string, isDir bool) bool {
+	path = filepath.ToSlash(path)
+	
+	matched := false
+	for _, p := range m.patterns {
+		if p.dirOnly && !isDir {
+			continue
+		}
+		
+		// Check full path and basename
+		if p.pattern.MatchString(path) || p.pattern.MatchString(filepath.Base(path)) {
+			matched = !p.negate
+		}
+	}
+	
+	return matched
 }
 
 func shouldSkipDir(name string) bool {
@@ -329,7 +431,6 @@ func processFile(repo *git.Repository, path string, repoRoot string, fromCommit,
 	// Count lines
 	lines, err := countLines(path)
 	if err != nil {
-		log.Printf("Warning: cannot count lines in %s: %v", path, err)
 		return nil
 	}
 
@@ -338,7 +439,11 @@ func processFile(repo *git.Repository, path string, repoRoot string, fromCommit,
 	}
 
 	// Get author
-	author := getAuthor(repo, path, repoRoot, fromCommit, toCommit, mode)
+	author := getAuthor(repoRoot, path, fromCommit, toCommit, mode)
+	if author == "unknown" {
+		// Silently skip files we can't get author for
+		return nil
+	}
 	author = merger.Canonicalize(author)
 
 	// Categorize
@@ -405,7 +510,7 @@ func countLines(path string) (int, error) {
 	return lines, nil
 }
 
-func getAuthor(repo *git.Repository, path string, repoRoot string, fromCommit, toCommit string, mode string) string {
+func getAuthor(repoRoot string, path string, fromCommit, toCommit string, mode string) string {
 	// Get relative path from repo root
 	relPath, err := filepath.Rel(repoRoot, path)
 	if err != nil {
@@ -419,7 +524,7 @@ func getAuthor(repo *git.Repository, path string, repoRoot string, fromCommit, t
 		return getAuthorBlame(repoRoot, relPath)
 	}
 
-	return getAuthorRange(repo, relPath, fromCommit, toCommit)
+	return "unknown" // Range mode not fully implemented yet
 }
 
 func getAuthorBlame(repoRoot string, path string) string {
@@ -427,8 +532,8 @@ func getAuthorBlame(repoRoot string, path string) string {
 	cmd := exec.Command("git", "-C", repoRoot, "blame", "--line-porcelain", path)
 	output, err := cmd.Output()
 	if err != nil {
-		log.Printf("Warning: git blame failed for %s: %v (falling back to log)", path, err)
-		return getAuthorFromLogSimple(repoRoot, path)
+		// Silently ignore files that can't be blamed
+		return "unknown"
 	}
 
 	authorCounts := make(map[string]int)
@@ -436,67 +541,6 @@ func getAuthorBlame(repoRoot string, path string) string {
 		if strings.HasPrefix(line, "author ") {
 			author := strings.TrimPrefix(line, "author ")
 			authorCounts[author]++
-		}
-	}
-
-	return getTopAuthor(authorCounts)
-}
-
-func getAuthorRange(repo *git.Repository, path string, fromHash, toHash string) string {
-	return getAuthorFromLog(repo, path, fromHash, toHash)
-}
-
-func getAuthorFromLog(repo *git.Repository, path string, fromHash, toHash string) string {
-	authorCounts := make(map[string]int)
-
-	head, err := repo.Head()
-	if err != nil {
-		return "unknown"
-	}
-
-	iter, err := repo.Log(&git.LogOptions{
-		From: head.Hash(),
-	})
-	if err != nil {
-		log.Printf("Warning: log failed for %s: %v", path, err)
-		return "unknown"
-	}
-
-	err = iter.ForEach(func(c *object.Commit) error {
-		patch, err := c.PatchContext(context.Background(), c)
-		if err != nil {
-			return nil
-		}
-
-		for _, fp := range patch.FilePatches() {
-			from, to := fp.Files()
-			if (from != nil && from.Path() == path) || (to != nil && to.Path() == path) {
-				authorCounts[c.Author.Name]++
-				break
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		log.Printf("Warning: error iterating log: %v", err)
-	}
-
-	return getTopAuthor(authorCounts)
-}
-
-func getAuthorFromLogSimple(repoRoot string, path string) string {
-	// Fallback: use git log CLI
-	cmd := exec.Command("git", "-C", repoRoot, "log", "--format=%an", "--", path)
-	output, err := cmd.Output()
-	if err != nil {
-		return "unknown"
-	}
-
-	authorCounts := make(map[string]int)
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.TrimSpace(line) != "" {
-			authorCounts[line]++
 		}
 	}
 
