@@ -26,14 +26,14 @@ import (
 type FileType string
 
 const (
-	TestCode       FileType = "test_code"
-	MainCode       FileType = "main_code"
-	TestResources  FileType = "test_resources"
-	MainResources  FileType = "main_resources"
-	Scripts        FileType = "scripts"
-	Documentation  FileType = "documentation"
-	Container      FileType = "container"
-	Other          FileType = "other"
+	TestCode      FileType = "test_code"
+	MainCode      FileType = "main_code"
+	TestResources FileType = "test_resources"
+	MainResources FileType = "main_resources"
+	Scripts       FileType = "scripts"
+	Documentation FileType = "documentation"
+	Container     FileType = "container"
+	Other         FileType = "other"
 )
 
 // FileStats holds per-file statistics
@@ -187,13 +187,13 @@ func main() {
 				}
 				return nil
 			}
-			
+
 			// Check gitignore
 			relPath, _ := filepath.Rel(repoRoot, path)
 			if gitignoreMatcher != nil && gitignoreMatcher.Match(relPath, info.IsDir()) {
 				return nil
 			}
-			
+
 			if isCodeFile(path) {
 				files <- path
 			}
@@ -314,19 +314,19 @@ func convertGitignorePattern(pattern string) string {
 
 func (m *GitignoreMatcher) Match(path string, isDir bool) bool {
 	path = filepath.ToSlash(path)
-	
+
 	matched := false
 	for _, p := range m.patterns {
 		if p.dirOnly && !isDir {
 			continue
 		}
-		
+
 		// Check full path and basename
 		if p.pattern.MatchString(path) || p.pattern.MatchString(filepath.Base(path)) {
 			matched = !p.negate
 		}
 	}
-	
+
 	return matched
 }
 

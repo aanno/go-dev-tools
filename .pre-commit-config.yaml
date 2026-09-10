@@ -1,0 +1,164 @@
+# also see https://pre-commit.com/hooks.html
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+        args: [--maxkb=1200]
+      - id: check-executables-have-shebangs
+      - id: check-illegal-windows-names
+      - id: check-json
+        exclude: tsconfig.json|.devcontainer/devcontainer.json
+      - id: check-merge-conflict
+      # - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-xml
+      - id: destroyed-symlinks
+      # - id: detect-aws-credentials
+      - id: detect-private-key
+      - id: pretty-format-json
+        exclude: tsconfig.json|.devcontainer/devcontainer.json
+        args: [--autofix, --no-sort-keys]
+  # Problem: I/O error : Permission denied: pom.xml
+  #          warning: failed to load external entity "pom.xml"
+  # - repo: https://github.com/comkieffer/pre-commit-xmllint.git
+  #   rev: 1.0.0
+  #   hooks:
+  #     - id: xmllint
+  # https://github.com/google/yamlfmt/blob/main/docs/pre-commit.md
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt
+  # Problem: wants to install node (and markdownlint-cli) but fails
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: "v0.47.0"
+    hooks:
+      - id: markdownlint
+        args: ["-f"]
+        stages: [pre-commit]
+        # node: 22.19.0
+  # https://github.com/TekWizely/pre-commit-golang/blob/master/sample-config.yaml
+  - repo: https://github.com/tekwizely/pre-commit-golang
+    # See 'pre-commit help autoupdate'
+    rev: v1.0.0-rc.4
+    hooks:
+      #
+      # Go Build
+      #
+      # - id: go-build-mod
+      #   args: ["-C", "codestats"]
+      # - id: go-build-pkg
+      #   args: ["-C", "codestats"]
+      # - id: go-build-repo-mod
+      #   args: ["-C", "codestats"]
+      # - id: go-build-repo-pkg
+      #   args: ["-C", "codestats"]
+      #
+      # Go Tool (Go 1.24+)
+      #
+      # -   id: go-tool
+      # -   id: go-tool-mod
+      # -   id: go-tool-repo
+      # -   id: go-tool-repo-mod
+      #
+      # Go Mod Tidy
+      #
+      - id: go-mod-tidy
+      - id: go-mod-tidy-repo
+      #
+      # Go Test
+      #
+      # - id: go-test-mod
+      # - id: go-test-pkg
+      # - id: go-test-repo-mod
+      # - id: go-test-repo-pkg
+      #
+      # Go Vet
+      #
+      # - id: go-vet
+      # - id: go-vet-mod
+      # - id: go-vet-pkg
+      # - id: go-vet-repo-mod
+      # - id: go-vet-repo-pkg
+      #
+      # Go Vulncheck
+      # note: Only works with Go modules
+      #
+      # - id: go-vulncheck-mod
+      # - id: go-vulncheck-repo-mod
+      #
+      # Revive
+      #
+      # - id: go-revive
+      # - id: go-revive-mod
+      # - id: go-revive-repo-mod
+      #
+      # GoSec
+      #
+      # - id: go-sec-mod
+      # - id: go-sec-pkg
+      # - id: go-sec-repo-mod
+      # - id: go-sec-repo-pkg
+      #
+      # StaticCheck
+      #
+      # - id: go-staticcheck-mod
+      # - id: go-staticcheck-pkg
+      # - id: go-staticcheck-repo-mod
+      # - id: go-staticcheck-repo-pkg
+      #
+      # StructSlop
+      #
+      # - id: go-structslop-mod
+      # - id: go-structslop-pkg
+      # - id: go-structslop-repo-mod
+      # - id: go-structslop-repo-pkg
+      #
+      # Formatters
+      #
+      - id: go-fmt
+        args: ["-w"]
+    # - id: go-fmt-repo
+    # - id: go-fumpt # replaces go-fmt
+    # - id: go-fumpt-repo # replaces go-fmt-repo
+    # - id: go-imports # replaces go-fmt
+    # - id: go-imports-repo # replaces go-fmt-repo
+    # - id: go-returns # replaces go-imports & go-fmt
+    # - id: go-returns-repo # replaces go-imports-repo & go-fmt-repo
+    #
+    # Style Checkers
+    #
+    # - id: go-lint
+    # - id: go-critic
+    #
+    # GolangCI-Lint
+    # - Fast Multi-Linter
+    # - Can be configured to replace MOST other hooks
+    # - Supports repo config file for configuration
+    # - https://github.com/golangci/golangci-lint
+    #
+    # - id: golangci-lint
+    # - id: golangci-lint-mod
+    # - id: golangci-lint-pkg
+    # - id: golangci-lint-repo-mod
+    # - id: golangci-lint-repo-pkg
+    #
+    # Invoking Custom Go Tools
+    # - Configured *entirely* through the `args` attribute, ie:
+    #   args: [ go, test, ./... ]
+    # - Use arg `--hook:error-on-output` to indicate that any output from the tool
+    #   should be treated as an error.
+    # - Use the `name` attribute to provide better messaging when the hook runs
+    # - Use the `alias` attribute to be able to invoke your hook via `pre-commit run`
+    #
+    # - id: my-cmd
+    # - id: my-cmd-mod
+    # - id: my-cmd-pkg
+    # - id: my-cmd-repo
+    # - id: my-cmd-repo-mod
+    # - id: my-cmd-repo-pkg
