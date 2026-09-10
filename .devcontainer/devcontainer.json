@@ -3,6 +3,7 @@
 {
   "name": "go-dev-tools",
   // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+  // https://hub.docker.com/r/microsoft/devcontainers-go
   "image": "mcr.microsoft.com/devcontainers/go:1",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
@@ -37,7 +38,7 @@
     // "source=${localEnv:GRADLE_USER_HOME},target=/home/vscode/.gradle,type=bind,z,consistency=cached",
     // "source=${localEnv:MVN_LOCAL_REPO},target=/home/vscode/.m2/repository,type=bind,z,consistency=cached",
     // "source=tmp,target=/tmp,type=bind,consistency=cached"
-    "source=/home/tpasch/go,target=/home/vscode/go,type=bind,z,consistency=cached",
+    "source=${localEnv:HOME}/go,target=/home/vscode/go,type=bind,z,consistency=cached",
     "type=tmpfs,destination=/tmp,tmpfs-mode=1777"
   ],
   "containerEnv": {
@@ -47,7 +48,7 @@
   "workspaceFolder": "/workspaces/go",
   // There seems to be no way to access the sources from the .devcontainer/devcontainer.json project
   // "workspaceMount": "source=/home/tpasch/it.nrw/gaeko-containers/gaeko-mirror,target=/workspaces/java,type=bind,z,consistency=cached",
-  "workspaceMount": "source=.,target=/workspaces/go,type=bind,z,consistency=cached",
+  "workspaceMount": "source=.,target=/workspaces/go,type=bind,z,consistency=cached"
   // "postCreateCommand": "source /workspaces/java/podman/env.podman.local"
   // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
   // "remoteUser": "root"
