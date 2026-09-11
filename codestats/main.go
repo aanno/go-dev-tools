@@ -115,7 +115,7 @@ func run(repoPath, configPath, fromCommit, toCommit, outputPath, mode string) er
 
 	switch mode {
 	case "range":
-		log.Printf("Computing range stats %s..%s", displayFrom(fromCommit), toCommit)
+		log.Printf("Computing range stats %s", displayRange(fromCommit, toCommit))
 		allStats, err = computeRangeStats(repoRoot, fromCommit, toCommit, authorMerger)
 		if err != nil {
 			return err
@@ -159,11 +159,4 @@ func run(repoPath, configPath, fromCommit, toCommit, outputPath, mode string) er
 	outputTable(aggregated)
 
 	return nil
-}
-
-func displayFrom(fromCommit string) string {
-	if fromCommit == "" {
-		return "<root>"
-	}
-	return fromCommit
 }

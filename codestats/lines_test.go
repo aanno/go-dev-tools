@@ -60,23 +60,28 @@ func TestCountLines_DocumentationSkipsCommentHeuristics(t *testing.T) {
 	}
 }
 
-func TestCountableLine(t *testing.T) {
-	cases := []struct {
-		content  string
-		fileType FileType
-		want     bool
-	}{
-		{"foo();", MainCode, true},
-		{"", MainCode, false},
-		{"   ", MainCode, false},
-		{"// comment", MainCode, false},
-		{"# heading", Documentation, true},
-		{"/* comment */", MainCode, false},
+func TestLinesCountable_MultiLineCommentAcrossCalls(t *testing.T) {
+	// rangemode.go feeds linesCountable the file's lines as reconstructed
+	// from git blame, in order - this exercises that same multi-line
+	// /* ... */ tracking a fragmented, per-line diff view couldn't do.
+	lines := []string{
+		"foo(); /*",
+		"still inside the comment",
+		"*/ bar();",
+		"// full comment",
+		"baz();",
+		"/* single line comment */",
 	}
-	for _, c := range cases {
-		got := countableLine(c.content, c.fileType)
-		if got != c.want {
-			t.Errorf("countableLine(%q, %v) = %v, want %v", c.content, c.fileType, got, c.want)
+
+	got := linesCountable(lines, MainCode)
+	want := []bool{true, false, true, false, true, false}
+
+	if len(got) != len(want) {
+		t.Fatalf("linesCountable() returned %d entries, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("linesCountable()[%d] (%q) = %v, want %v", i, lines[i], got[i], want[i])
 		}
 	}
 }

@@ -40,11 +40,11 @@ The tool used to be one ~850-line `main.go`; it's now split by concern:
 | `filetypes.go`  | path/extension-based categorization (`categorizeFile`, `isCodeFile`, `detectLanguage`, `shouldSkipDir`) |
 | `gitignore.go`  | hand-rolled `.gitignore` pattern matching                        |
 | `tracked.go`    | git-index-based "is this file tracked at all" check              |
-| `lines.go`      | `countLines` (whole file) and `countableLine` (single diff line) |
+| `lines.go`      | `countLines` (reads a file) and `linesCountable` (the shared blank/comment heuristics, given any ordered slice of lines) |
 | `authors.go`    | `authors.yaml` loading and author-identity canonicalization      |
-| `snapshot.go`   | snapshot-mode engine: walk + git blame                           |
+| `snapshot.go`   | snapshot-mode engine: walk + git blame at HEAD (or `--to`)        |
 | `checkout.go`   | temporary checkout/restore helper used by snapshot mode's `--to` |
-| `rangemode.go`  | range-mode engine: commit-log/diff based, no blame                |
+| `rangemode.go`  | range-mode engine: git blame scoped to a commit range             |
 | `aggregate.go`  | turns `[]FileStats` into the grouped `AggregatedStats`            |
 | `output.go`     | CSV / JSON / table writers, output-overwrite guard                |
 
@@ -57,22 +57,39 @@ This is the most important thing to know before changing either mode:
   filesystem and runs `git blame` per file. `FileStats.Lines` is the file's
   *current* line count.
 
-- **Range mode** (`rangemode.go`) answers "how many lines did each author
-  *add* within this commit range?" - it runs one `git log --first-parent -p`
-  and parses the unified diff itself, deliberately **never** calling
-  `git blame`/`git annotate`. `FileStats.Lines` there is *added* lines
-  within the range, not current ownership. It only follows first-parent
-  history, so merge commits' own diffs aren't double-counted against a
-  feature branch's commits.
+- **Range mode** (`rangemode.go`) answers "who owns each surviving line,
+  considering only commits within this range?" - for every file touched
+  between the two endpoints, it runs one `git blame --line-porcelain
+  --first-parent` scoped to `fromCommit..toCommit`, and excludes lines git
+  marks "boundary" (last touched at or before `fromCommit`, i.e. outside
+  the window). `FileStats.Lines` there is *surviving in-range* lines, not
+  "lines added" - a line modified several times within the range (a CI job
+  bumping a version string on every release, say) is credited exactly once,
+  to whoever made its last change in the window, instead of once per commit
+  that happened to touch it. It only follows first-parent history (via
+  blame's own `--first-parent`, added in git 2.29+), so a merge commit
+  doesn't get its own attribution separate from the feature branch commits
+  it merged.
+
+  fromCommit == "" is the "from the root of history" case (see Mode/flag
+  resolution below): every surviving line counts there, including ones
+  from the very first commit - git still marks those "boundary" too (blame
+  has nothing further back to diff against), but that marker is only
+  excluded when an explicit fromCommit was given.
 
 Because both engines produce the same `[]FileStats` shape, `aggregate.go`
 and `output.go` are mode-agnostic - don't special-case mode down there.
 
-Known range-mode limitations (acceptable for now, revisit if it matters):
-renames aren't tracked specially across the range, and comment detection on
-added lines (`countableLine`) has no cross-line state, unlike `countLines`'s
-proper `/* ... */` tracking - a diff line that's part of a multi-line
-comment but doesn't itself carry a delimiter can't be recognized as such.
+`linesCountable` (`lines.go`) does the blank/comment filtering for both
+engines. It takes a file's lines *in order* and tracks `/* ... */` state
+across them - snapshot mode feeds it a file read straight off disk, range
+mode feeds it the file's lines as reconstructed from blame output (blame
+always returns the whole file top-to-bottom), so both get proper
+multi-line-comment handling, not just per-line heuristics.
+
+Known range-mode limitation (acceptable for now, revisit if it matters):
+renames aren't tracked specially across the range, so a renamed-and-modified
+file may undercount lines recorded under its old path.
 
 ## Mode/flag resolution (see `main()`)
 

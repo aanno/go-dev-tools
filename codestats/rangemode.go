@@ -8,50 +8,140 @@ import (
 	"strings"
 )
 
-const rangeCommitMarker = "@@CODESTATS_COMMIT@@"
-
-// computeRangeStats walks the first-parent commit history strictly after
-// fromCommit (exclusive) up to toCommit (inclusive) and attributes every
-// added, non-blank, non-comment line to the commit's author - entirely from
-// `git log -p`, without ever calling git blame/annotate.
+// computeRangeStats attributes each line still present in the file at
+// toCommit to whichever commit in (fromCommit, toCommit] last touched it,
+// via a range-scoped `git blame --first-parent`. A line whose last touch
+// falls at or before fromCommit ("boundary", in git's terminology) is
+// excluded - it didn't change within this window.
 //
-// fromCommit == "" means "from the root of history": every first-parent
-// commit reachable from toCommit, including the root commit's own diff
-// (git shows a root commit's diff against the empty tree automatically).
+// This naturally dedupes a line modified several times within the range
+// (e.g. a CI job bumping a pom.xml version string on every release) down
+// to a single count, credited to whoever made its last change in the
+// window - rather than once per commit that happened to touch it, which is
+// what counting each commit's diff separately would do.
 //
-// This intentionally counts *lines added within the range*, not "who
-// currently owns each line" (that would be the blame-based snapshot
-// semantics). Merge commits are not diffed themselves (--first-parent), so
-// a feature branch's commits are counted once, via the mainline.
+// fromCommit == "" means "from the root of history": every surviving line
+// counts, including ones from the very first commit. Git still marks those
+// "boundary" (blame has nothing further back to compare against), but that
+// marker is only meaningful - and only excluded - when an explicit
+// fromCommit was given.
 //
 // Known limitation: renames across the range are not tracked specially,
-// and comment detection on added lines has no cross-line state (see
-// countableLine), so a line that is part of a multi-line comment but
-// doesn't itself carry a /* or */ delimiter cannot be recognized as such.
+// so a renamed-and-modified file may undercount (blame at the new path
+// won't see history recorded under the old path without git's rename
+// detection, which --first-parent blame does not follow across renames by
+// itself here).
 func computeRangeStats(repoRoot, fromCommit, toCommit string, merger *AuthorMerger) ([]FileStats, error) {
-	rangeArg := toCommit
-	if fromCommit != "" {
-		rangeArg = fromCommit + ".." + toCommit
+	files, err := touchedFiles(repoRoot, fromCommit, toCommit)
+	if err != nil {
+		return nil, err
 	}
 
-	cmd := exec.Command("git", "-C", repoRoot, "log",
-		"--first-parent", "--reverse", "--no-color",
-		"--format="+rangeCommitMarker+":%H%x09%an",
-		"-p", rangeArg)
+	excludeBoundary := fromCommit != ""
+
+	type key struct{ author, path string }
+	counts := make(map[key]int)
+
+	for _, path := range files {
+		if !isCodeFile(path) {
+			continue
+		}
+		fileType, _ := categorizeFile(path)
+
+		blamed, err := blameRange(repoRoot, fromCommit, toCommit, path)
+		if err != nil {
+			// Most commonly: the file no longer exists at toCommit (it was
+			// deleted somewhere in the range) - nothing survives to count.
+			continue
+		}
+
+		lines := make([]string, len(blamed))
+		for i, bl := range blamed {
+			lines[i] = bl.content
+		}
+		countable := linesCountable(lines, fileType)
+
+		for i, bl := range blamed {
+			if !countable[i] {
+				continue
+			}
+			if excludeBoundary && bl.boundary {
+				continue
+			}
+			counts[key{merger.Canonicalize(bl.author), path}]++
+		}
+	}
+
+	var stats []FileStats
+	for k, lines := range counts {
+		fileType, language := categorizeFile(k.path)
+		stats = append(stats, FileStats{
+			Path:     k.path,
+			Type:     fileType,
+			Lines:    lines,
+			Author:   k.author,
+			Language: language,
+		})
+	}
+
+	if len(stats) == 0 {
+		log.Printf("Range %s produced no counted lines", displayRange(fromCommit, toCommit))
+	}
+
+	return stats, nil
+}
+
+// touchedFiles returns every path worth blaming: in the bounded case,
+// everything whose content differs between fromCommit and toCommit (a file
+// unchanged between the two endpoints can't have any surviving in-range
+// lines, so it's safe to skip); in the root-sentinel case, every path that
+// exists at toCommit.
+func touchedFiles(repoRoot, fromCommit, toCommit string) ([]string, error) {
+	var cmd *exec.Cmd
+	if fromCommit != "" {
+		cmd = exec.Command("git", "-C", repoRoot, "diff", "--name-only", fromCommit, toCommit)
+	} else {
+		cmd = exec.Command("git", "-C", repoRoot, "ls-tree", "-r", "--name-only", toCommit)
+	}
 
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git log %s failed: %w", rangeArg, err)
+		return nil, fmt.Errorf("failed to list touched files for %s: %w", displayRange(fromCommit, toCommit), err)
 	}
 
-	type key struct {
-		author, path string
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
 	}
-	added := make(map[key]int)
+	return files, nil
+}
 
-	var currentAuthor, currentPath string
-	var currentType FileType
-	var currentCounts bool
+type blamedLine struct {
+	author   string
+	content  string
+	boundary bool
+}
+
+// blameRange runs `git blame --line-porcelain --first-parent` for path as
+// of toCommit, scoped to fromCommit..toCommit when fromCommit is given,
+// returning the file's lines in order.
+func blameRange(repoRoot, fromCommit, toCommit, path string) ([]blamedLine, error) {
+	rev := toCommit
+	if fromCommit != "" {
+		rev = fromCommit + ".." + toCommit
+	}
+
+	cmd := exec.Command("git", "-C", repoRoot, "blame", "--line-porcelain", "--first-parent", rev, "--", path)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var lines []blamedLine
+	var author string
+	var boundary bool
 
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -59,59 +149,56 @@ func computeRangeStats(repoRoot, fromCommit, toCommit string, merger *AuthorMerg
 		line := scanner.Text()
 
 		switch {
-		case strings.HasPrefix(line, rangeCommitMarker+":"):
-			rest := strings.TrimPrefix(line, rangeCommitMarker+":")
-			parts := strings.SplitN(rest, "\t", 2)
-			currentAuthor = ""
-			if len(parts) == 2 {
-				currentAuthor = parts[1]
-			}
-			currentPath, currentCounts = "", false
+		case strings.HasPrefix(line, "\t"):
+			lines = append(lines, blamedLine{
+				author:   author,
+				content:  strings.TrimPrefix(line, "\t"),
+				boundary: boundary,
+			})
+			author, boundary = "", false
 
-		case strings.HasPrefix(line, "diff --git "):
-			currentPath, currentCounts = "", false
+		case line == "boundary":
+			boundary = true
 
-		case strings.HasPrefix(line, "Binary files "):
-			currentCounts = false
+		case strings.HasPrefix(line, "author "):
+			author = strings.TrimPrefix(line, "author ")
 
-		case strings.HasPrefix(line, "+++ "):
-			p := strings.TrimPrefix(line, "+++ ")
-			if p == "/dev/null" {
-				currentCounts = false
-				continue
-			}
-			currentPath = strings.TrimPrefix(p, "b/")
-			currentType, _ = categorizeFile(currentPath)
-			currentCounts = isCodeFile(currentPath)
-
-		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
-			if !currentCounts {
-				continue
-			}
-			if countableLine(line[1:], currentType) {
-				added[key{currentAuthor, currentPath}]++
-			}
+		case isBlameHeaderStart(line):
+			// Start of a new block's header (a commit hash line); reset
+			// per-block state defensively in case a block's content line
+			// is ever missing.
+			author, boundary = "", false
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to parse git log output: %w", err)
+		return nil, err
 	}
 
-	var stats []FileStats
-	for k, lines := range added {
-		fileType, language := categorizeFile(k.path)
-		stats = append(stats, FileStats{
-			Path:     k.path,
-			Type:     fileType,
-			Lines:    lines,
-			Author:   merger.Canonicalize(k.author),
-			Language: language,
-		})
-	}
+	return lines, nil
+}
 
-	if len(stats) == 0 {
-		log.Printf("Range %s produced no counted added lines", rangeArg)
+// isBlameHeaderStart reports whether line starts a new --line-porcelain
+// block: a 40-character hex commit hash followed by 2-3 numbers
+// (orig-line, final-line, and optionally a group line count).
+func isBlameHeaderStart(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 3 || len(fields) > 4 {
+		return false
 	}
+	if len(fields[0]) != 40 {
+		return false
+	}
+	for _, c := range fields[0] {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
 
-	return stats, nil
+func displayRange(fromCommit, toCommit string) string {
+	if fromCommit == "" {
+		return "<root>.." + toCommit
+	}
+	return fromCommit + ".." + toCommit
 }

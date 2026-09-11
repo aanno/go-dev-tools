@@ -26,7 +26,9 @@ Key categorization logic for Maven standard layout:
 The tool is now complete with:
 
 * Git blame for snapshot mode
-* Commit-log/diff based range mode (no blame/annotate)
+* Range mode via git blame scoped to the commit range, so a line changed
+  several times within the range (e.g. a CI-bumped version string) is
+  credited once, to whoever last touched it in that window
 * Author merging via YAML config
 * Parallel processing (4 workers) with a CLI progress bar
 * Sorted, grouped-by-type output (lines desc, then alpha)
@@ -54,9 +56,108 @@ the grouped output shape).
    * go projects (simple and monorepos)
    * java gradle projects
    * scala sbt projects
+   * ansible projects (simple and monorepos)
 2. In range mode, also calculate deleted lines
    * count them separate
    * for each author, also introduce a new column with `sum=<lines_added> - <lines_deleted_that_originate_from_this_author>
+
+Example react simple project layout:
+
+```text
+. (root: *.code-workspace *.json *.yaml *.d.ts *.xml *.md *.conf *.properties *.config.js)
+├── dataport_deployment
+├── docker
+├── docs
+│   ├── arc42 (mostly markdown)
+│   ├── plugin-development
+│   └── resources
+│       └── img (icons, screenshots, etc., as *.jpg or other image formats))
+├── node_modules <ignored>
+├── public
+│   └── assets
+│       └── themes
+│           ├── lara-dark-indigo (*.css)
+│           │   └── fonts (*.woff2 and other font formats)
+│           └── lara-light-indigo
+│               └── fonts
+├── scripts (*.sh bash and sh scripts, *.js *.mjs javascript)
+├── src (*.ts *.tsx *.test.ts typescript)
+│   ├── api-clients
+│   ├── assets
+│   │   ├── fonts
+│   │   │   └── fira-sans (*.woff2 and other font formats)
+│   │   └── icons (*.svg and other image formats)
+│   ├── components
+│   │   ├── bzr-config
+│   │   ├── fehlerliste
+│   │   ├── filter-templates
+│   │   ├── footer
+│   │   ├── header
+│   │   │   └── bread-crumb
+│   │   └── sidebar
+│   ├── configs
+│   ├── constants (*.ts)
+│   │   └── user-permissions
+│   ├── features
+│   │   ├── batchjob-monitor
+│   │   ├── error
+│   │   ├── export-overview
+│   │   │   ├── components
+│   │   │   ├── data
+│   │   │   └── utils
+│   │   ├── config
+│   │   │   ├── status
+│   │   │   └── steps
+│   │   │       ├── erhebungsdaten
+│   │   │       ├── erhebungsteilnehmer
+│   │   │       │   ├── data
+│   │   │       │   ├── hooks
+│   │   │       │   └── utils
+│   │   │       └── plausibilisierung
+│   │   ├── navigationsansicht
+│   │   │   ├── fehlerliste
+│   │   │   ├── table-columns
+│   │   │   └── utils
+│   │   └── plugins-config
+│   ├── hooks
+│   │   └── data-table
+│   │       └── utils
+│   ├── i18n
+│   │   └── translations
+│   ├── layouts (*.scss *.tsx *.test.tsx)
+│   ├── pages
+│   │   ├── batchjob-monitor
+│   │   ├── bzr-config
+│   │   ├── bzrs
+│   │   ├── dashboard-arbeitsstand
+│   │   ├── datenimport-konfigurationen
+│   │   ├── detailansicht
+│   │   ├── error
+│   │   ├── export-overview
+│   │   ├── mandanten-bzr-config
+│   │   └── navigationsansicht
+│   ├── routes
+│   │   └── loaders
+│   │       └── utils
+│   ├── stores
+│   ├── theme
+│   └── utils
+└── tests (*.ts *.json)
+    ├── data
+    ├── fixtures
+    ├── integration-tests
+    ├── mocks
+    └── utils
+```
+
+```text
+```
+
+```text
+```
+
+```text
+```
 
 ## Configuration
 
