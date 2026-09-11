@@ -64,7 +64,7 @@ the grouped output shape).
 Example react simple project layout:
 
 ```text
-. (root: *.code-workspace *.json *.yaml *.d.ts *.xml *.md *.conf *.properties *.config.js)
+. (root: *.code-workspace *.json *.yaml *.d.ts *.xml *.md *.conf *.properties *.config.js .env .npmrc .prettierrc .gitlab-ci.yml)
 ├── dataport_deployment
 ├── docker
 ├── docs
@@ -150,13 +150,84 @@ Example react simple project layout:
     └── utils
 ```
 
-```text
-```
+Example of an playwright typescript simple project:
 
 ```text
+. (root: *.code-workspace) *.json *.ts *.md .gitlab-ci.yml .gitignore)
+├── devcontainer (devcontainer-lock.json devcontainer.json)
+├── fixtures (*.ts)
+├── helpers (*.ts)
+├── node_modules <ignored>
+playwright-junit-reporter
+├── pages (*.ts)
+├── results <ignored>
+├── services (*.ts)
+│   ├── infrastructure
+│   └── model
+├── test-results <ignored>
+└── tests (*.ts)
+    ├── integration
+    ├── performance
+    └── ui
 ```
 
+Example of an ansible monorepo project:
+
 ```text
+. (pyproject.toml yamlfmt.yml requirements.yml *.md *.code-workspace ansible.cfg pyproject.toml .ansible-lint .dockerignore .ensure-ansiblevaulted.yml .gitlab-ci.yml .pre-commit-config.yaml)
+├── accso
+│   ├── docs (*.md)
+│   ├── meta (*.yml)
+│   ├── molecule (*.yml *.md *.j2)
+│   │   └── shared
+│   │       └── templates
+│   │           └── vagrant
+│   ├── plugins
+│   │   └── filter (*.py)
+│   │       └── __pycache__ <ignored>
+│   └── roles (*.yml *.md *.j2 *.py)
+│       ├── gaeko_instance
+│       │   ├── defaults
+│       │   ├── docs
+│       │   ├── handlers
+│       │   ├── meta
+│       │   ├── tasks
+│       │   ├── templates
+│       │   ├── tests
+│       │   └── vars
+│       ├── gitlab_runner_podman
+│       │   ├── defaults
+│       │   ├── files
+│       │   ├── handlers
+│       │   ├── meta
+│       │   ├── tasks
+│       │   ├── templates
+│       │   ├── tests
+│       │   └── vars
+├── ansible_collections <ignored>
+├── config
+│   └── ssh
+├── dc <several .devcontainer configurations>
+│   ├── alpine
+│   └── standard-not-working
+├── fact_cache <ignored>
+├── features (*.md)
+├── project_ansible.egg-info <ignored> (*.txt)
+├── inventories (*.yml)
+│   ├── production
+│   ├── staging
+│   │   └── group_vars
+│   │       └── all
+│   └── testing
+├── kc-backup (*.yml)
+├── playbooks (*.yml)
+│   └── templates (*.j2)
+├── resources
+│   ├── img (*.jpg *.svg or other image formats))
+│   └── kc (*.yml)
+├── scripts (*.sh)
+└── tests (*.py)
+    └── __pycache__ <ignored>
 ```
 
 ## Configuration
