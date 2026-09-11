@@ -35,3 +35,5 @@ go.work.sum
 
 /.devcontainer/devcontainer-lock.json
 /codestats/codestats
+codestats.csv
+codestats.json
