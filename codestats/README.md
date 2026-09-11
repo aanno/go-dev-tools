@@ -26,49 +26,23 @@ Key categorization logic for Maven standard layout:
 The tool is now complete with:
 
 * Git blame for snapshot mode
-* Commit range filtering for range mode
+* Commit-log/diff based range mode (no blame/annotate)
 * Author merging via YAML config
-* Parallel processing (4 workers)
-* Sorted output (lines desc, then alpha)
-* CSV + JSON output with overwrite protection
+* Parallel processing (4 workers) with a CLI progress bar
+* Sorted, grouped-by-type output (lines desc, then alpha)
+* CSV + JSON output with overwrite protection (checked before processing)
 * Proper error logging per file
 * Maven standard layout detection
+* `.gitignore` matching plus a "must be tracked by git" filter
+* Split across several files by concern - see [CLAUDE.md](CLAUDE.md)
 
 ## TODOs
 
 ### Phase 1
 
-1. File overwrite check comes after processing but should be before processing.
-2. Result should be tweaked:
-   * Lines by Author and Type: Should be grouped by TYPE, % should be for each TYPE
-     (not for all lines); add a line between groups for cli output.
-   * Lines by Type: works as expected
-   * Lines by Author: works as expected
-   * CSV: adapt accordingly
-   * JSON: grouping is missing, also should include a sum (total) for each TYPE
-3. `codestats/main.go` is currently a bit too big. To be split into several files.
-4. CLI progressbar to be displayed while processing.
-5. Recheck that empty lines and comments lines are not counted.
-6. In addition to all files maching '.gitignore' (this is already implemented),
-   all files NOT under version control (i.e. all files NOT added to git) should
-   be ignored.
-7. Range mode:
-   * Does not work, e.g. if I try is on a repo which has tags '0.4.20' and '0.4.33':
-
-     ```sh
-     codestats . --from 0.4.20 --to 0.4.33 --mode range
-     2026/09/11 08:58:09 No author config found at authors.yaml, using raw authors
-     2026/09/11 08:58:09 No files processed
-     ```
-
-   * Range mode should be based on commit (i.e. avoid annotate/blame if possible)
-   * Range mode should always be used if '--from' flag is given.
-   * In case of NO '--from' but with '--to' calculation is possible in either
-     snapshot or range mode. In this case '--mode' MUST be given.
-     * In this case '--mode snapshot' needs a repo without uncommited changes
-       (i.e. a 'clean' repo) in order to switch to the '--to' commit. In this
-       case a unclean repo should result in an error message and no processing.
-   * Write an CLAUDE.md file for me.
+Done - see [CLAUDE.md](CLAUDE.md) for how each of these ended up implemented
+(mode/flag resolution, the two analysis engines, the two filtering layers,
+the grouped output shape).
 
 ### Phase 2
 
