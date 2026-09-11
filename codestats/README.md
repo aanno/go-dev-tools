@@ -63,10 +63,12 @@ the grouped output shape).
    per-ecosystem coverage table (react/angular, python, python/maturin, go,
    java gradle, scala sbt, ansible - simple and monorepo alike - plus the
    new `build` category for containers/compose/Quadlet/build descriptors).
-   * ansible projects (simple and monorepos)
-2. In range mode, also calculate deleted lines
-   * count them separate
-   * for each author, also introduce a new column with `sum=<lines_added> - <lines_deleted_that_originate_from_this_author>`
+2. Done - range mode now also reports deleted lines, separately from
+   surviving lines, credited to whoever originally wrote the deleted line
+   (not whoever deleted it) - plus a per-author `sum = lines_added -
+   lines_deleted_that_originate_from_this_author` column. See
+   [CLAUDE.md](CLAUDE.md) for the mechanism and a caveat worth reading
+   before trusting a negative `sum` at face value.
 
 Example react simple project layout:
 

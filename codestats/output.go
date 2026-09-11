@@ -77,6 +77,29 @@ func outputCSV(stats *AggregatedStats, outputPath string) error {
 		return fmt.Errorf("failed to write CSV: %w", err)
 	}
 
+	// Deletions (range mode only) - kept in the same 5-column shape rather
+	// than widening the schema: "lines" carries whichever single number
+	// each category is about (a deleted count, or the net added-minus-
+	// deleted sum), distinguished by the category label.
+	if stats.Deletions != nil {
+		for _, row := range stats.Deletions.ByType {
+			if err := writer.Write([]string{"deleted_by_type", row.Type, "", strconv.Itoa(row.LinesDeleted), ""}); err != nil {
+				return fmt.Errorf("failed to write CSV: %w", err)
+			}
+		}
+		for _, row := range stats.Deletions.ByAuthor {
+			if err := writer.Write([]string{"deleted_by_author", "", row.Author, strconv.Itoa(row.LinesDeleted), ""}); err != nil {
+				return fmt.Errorf("failed to write CSV: %w", err)
+			}
+			if err := writer.Write([]string{"net_sum_by_author", "", row.Author, strconv.Itoa(row.Sum), ""}); err != nil {
+				return fmt.Errorf("failed to write CSV: %w", err)
+			}
+		}
+		if err := writer.Write([]string{"deleted_total", "", "", strconv.Itoa(stats.Deletions.Total), ""}); err != nil {
+			return fmt.Errorf("failed to write CSV: %w", err)
+		}
+	}
+
 	log.Printf("CSV written to %s", csvPath)
 	return nil
 }
@@ -139,4 +162,36 @@ func outputTable(stats *AggregatedStats) {
 	table3.Render()
 
 	fmt.Printf("\n## Total Lines: %d\n", stats.Total.Lines)
+
+	if stats.Deletions != nil {
+		outputDeletionsTable(stats.Deletions)
+	}
+}
+
+// outputDeletionsTable renders the range-mode-only deleted-lines section:
+// how many lines originally attributed to each author (or type) were
+// deleted somewhere within the range, and each author's net Sum once
+// that's subtracted from their surviving line count.
+func outputDeletionsTable(d *DeletionStats) {
+	fmt.Println("\n## Deleted Lines by Type (range mode)")
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Type", "Deleted"})
+	table.SetBorder(false)
+	table.SetAutoWrapText(false)
+	for _, row := range d.ByType {
+		table.Append([]string{row.Type, strconv.Itoa(row.LinesDeleted)})
+	}
+	table.Render()
+
+	fmt.Println("\n## Deleted Lines by Author (Sum = Added - Deleted)")
+	table2 := tablewriter.NewWriter(os.Stdout)
+	table2.SetHeader([]string{"Author", "Added", "Deleted", "Sum"})
+	table2.SetBorder(false)
+	table2.SetAutoWrapText(false)
+	for _, row := range d.ByAuthor {
+		table2.Append([]string{row.Author, strconv.Itoa(row.LinesAdded), strconv.Itoa(row.LinesDeleted), strconv.Itoa(row.Sum)})
+	}
+	table2.Render()
+
+	fmt.Printf("\n## Total Deleted Lines: %d\n", d.Total)
 }

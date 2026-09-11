@@ -133,12 +133,31 @@ func blameRange(repoRoot, fromCommit, toCommit, path string) ([]blamedLine, erro
 		rev = fromCommit + ".." + toCommit
 	}
 
-	cmd := exec.Command("git", "-C", repoRoot, "blame", "--line-porcelain", "--first-parent", rev, "--", path)
-	output, err := cmd.Output()
+	output, err := exec.Command("git", "-C", repoRoot, "blame", "--line-porcelain", "--first-parent", rev, "--", path).Output()
 	if err != nil {
 		return nil, err
 	}
+	return parseBlamePorcelain(output)
+}
 
+// blameLinesAt runs `git blame --line-porcelain --first-parent` for path as
+// of rev, restricted to the given 1-based, inclusive line ranges (deletions.go
+// uses this to find who originally wrote a range of lines a later commit
+// removed). rev is a single revision, not a fromCommit..toCommit range, so
+// there's no "boundary" concept here - every returned line just has a
+// normal author.
+func blameLinesAt(repoRoot, rev, path string, start, count int) ([]blamedLine, error) {
+	lRange := fmt.Sprintf("%d,%d", start, start+count-1)
+	output, err := exec.Command("git", "-C", repoRoot, "blame", "--line-porcelain", "--first-parent", "-L", lRange, rev, "--", path).Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseBlamePorcelain(output)
+}
+
+// parseBlamePorcelain parses `git blame --line-porcelain` output into an
+// ordered slice of blamedLine, shared by blameRange and blameLinesAt.
+func parseBlamePorcelain(output []byte) ([]blamedLine, error) {
 	var lines []blamedLine
 	var author string
 	var boundary bool

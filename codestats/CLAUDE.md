@@ -45,7 +45,8 @@ The tool used to be one ~850-line `main.go`; it's now split by concern:
 | `authors.go`    | `authors.yaml` loading and author-identity canonicalization      |
 | `snapshot.go`   | snapshot-mode engine: walk + git blame at HEAD (or `--to`)        |
 | `checkout.go`   | temporary checkout/restore helper used by snapshot mode's `--to` |
-| `rangemode.go`  | range-mode engine: git blame scoped to a commit range             |
+| `rangemode.go`  | range-mode engine: git blame scoped to a commit range (also the shared `--line-porcelain` parser used by `deletions.go`) |
+| `deletions.go`  | range-mode-only: deleted-lines tracking (`computeDeletionStats`)   |
 | `aggregate.go`  | turns `[]FileStats` into the grouped `AggregatedStats`            |
 | `output.go`     | CSV / JSON / table writers, output-overwrite guard                |
 
@@ -91,6 +92,50 @@ multi-line-comment handling, not just per-line heuristics.
 Known range-mode limitation (acceptable for now, revisit if it matters):
 renames aren't tracked specially across the range, so a renamed-and-modified
 file may undercount lines recorded under its old path.
+
+## Deleted lines (range mode only): `deletions.go`
+
+`computeRangeStats` (above) answers "who's credited with each surviving
+line". `computeDeletionStats` answers a different question: "of the lines
+that got deleted somewhere within this range, who originally wrote them?" -
+crediting the deletion to whoever wrote the line, not to whoever deleted
+it. Combined with the surviving-line count (`AggregatedStats.ByAuthor`,
+passed in as `survivingByAuthor`), that gives each author a net `Sum =
+LinesAdded - LinesDeleted`.
+
+Mechanism: `deletedHunks` runs one `git log -p --unified=0 --first-parent`
+over the whole range and keeps only each diff hunk's header (old-start,
+old-count) - deliberately not the actual +/- content, since `--unified=0`
+strips context and we don't need it yet. For every hunk that removes at
+least one line, `blameLinesAt` runs a *second*, much finer-grained blame:
+`git blame -L <oldStart>,<oldStart+oldCount-1> <commit>^ -- <oldPath>`,
+finding who last touched exactly those lines *before* this commit deleted
+them. That's potentially one blame call per hunk-that-deletes-something in
+the whole range, not one per file like `computeRangeStats` - a real cost on
+a range with heavy churn, called out in `computeDeletionStats`'s doc
+comment.
+
+`AggregatedStats.Deletions` is a `*DeletionStats`, populated only in
+`main.go`'s range branch (nil in snapshot mode, where "deleted within a
+range" has no meaning) - `output.go` checks for nil rather than taking a
+mode argument, keeping it structurally mode-agnostic even though only one
+mode ever populates the field.
+
+A line can be "not counted as surviving" for a reason that has nothing to
+do with deletion: `computeRangeStats` only counts a line if its *last*
+touch falls within (fromCommit, toCommit] (see boundary exclusion, above) -
+a line added right at the boundary commit itself and never touched again
+is excluded from `ByAuthor`, even though it's still in the file. That
+author can then show up in the deletions table with `LinesAdded: 0` and a
+negative `Sum`, which looks alarming until you remember `LinesAdded` here
+means "credited as surviving *within this window*", not "still exists in
+the file at all". `deletions_test.go`'s three-commit fixture (Alice adds
+two lines, Bob adds one, Carol deletes one of Alice's) exercises exactly
+this interaction - read it before changing either engine.
+
+Same known limitation as above: a rename isn't followed back through
+`blameLinesAt`, so a deleted line that had been renamed to a new path
+along the way is blamed at that new path, not traced through history.
 
 ## Categorization is ecosystem-agnostic, not a per-ecosystem if-chain
 

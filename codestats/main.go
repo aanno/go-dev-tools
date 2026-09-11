@@ -150,6 +150,19 @@ func run(repoPath, configPath, fromCommit, toCommit, outputPath, mode string) er
 	}
 
 	aggregated := aggregateStats(allStats)
+
+	if mode == "range" {
+		survivingByAuthor := make(map[string]int, len(aggregated.ByAuthor))
+		for _, a := range aggregated.ByAuthor {
+			survivingByAuthor[a.Author] = a.Lines
+		}
+		deletions, err := computeDeletionStats(repoRoot, fromCommit, toCommit, authorMerger, survivingByAuthor)
+		if err != nil {
+			return err
+		}
+		aggregated.Deletions = deletions
+	}
+
 	if err := outputCSV(aggregated, outputPath); err != nil {
 		return err
 	}

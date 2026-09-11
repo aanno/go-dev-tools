@@ -42,6 +42,12 @@ type AggregatedStats struct {
 	ByType          []TypeStats   `json:"by_type"`
 	ByAuthor        []AuthorStats `json:"by_author"`
 	Total           TotalStats    `json:"total"`
+	// Deletions is populated only in range mode (see deletions.go and
+	// main.go's range branch) - nil in snapshot mode, where "deleted"
+	// within a range has no meaning. outputCSV/outputJSON/outputTable all
+	// check for nil rather than taking a mode argument, keeping this file
+	// mode-agnostic.
+	Deletions *DeletionStats `json:"deletions,omitempty"`
 }
 
 func aggregateStats(stats []FileStats) *AggregatedStats {
