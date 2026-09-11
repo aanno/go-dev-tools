@@ -14,8 +14,18 @@ import (
 // .gitignore matcher and is tracked by git (TODO: files never `git add`-ed
 // are ignored too, not just gitignored ones).
 func walkRepoFiles(repoPath, repoRoot string, gitignoreMatcher *GitignoreMatcher, tracked map[string]bool) ([]string, error) {
+	// repoRoot (from go-git) is always absolute; repoPath as typed on the
+	// CLI (e.g. ".") often isn't. Walking a relative path would make every
+	// walked path relative too, breaking filepath.Rel(repoRoot, path) below
+	// (it can't relate a relative path to an absolute one) and silently
+	// dropping every file - resolve to absolute first.
+	absRepoPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return nil, err
+	}
+
 	var files []string
-	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(absRepoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

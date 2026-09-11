@@ -101,20 +101,22 @@ func outputTable(stats *AggregatedStats) {
 	fmt.Println("\n=== CODE STATISTICS ===")
 
 	fmt.Println("\n## Lines by Author and Type")
-	for i, group := range stats.ByAuthorAndType {
-		if i > 0 {
-			fmt.Println()
-		}
-		fmt.Printf("--- %s (%d lines) ---\n", group.Type, group.TotalLines)
-		table := tablewriter.NewWriter(os.Stdout)
-		table.SetHeader([]string{"Author", "Lines", "%"})
-		table.SetBorder(false)
-		table.SetAutoWrapText(false)
+	table1 := tablewriter.NewWriter(os.Stdout)
+	table1.SetHeader([]string{"Type", "Author", "Lines", "%"})
+	table1.SetBorder(false)
+	table1.SetAutoWrapText(false)
+	// The Type column repeats the same value for every row in a group;
+	// AutoMergeCells collapses those into one spanning cell, so the whole
+	// section reads as a single table with a visual break per group
+	// instead of one table per type.
+	table1.SetAutoMergeCellsByColumnIndex([]int{0})
+	for _, group := range stats.ByAuthorAndType {
+		table1.Append([]string{group.Type, "(total)", strconv.Itoa(group.TotalLines), "100.00%"})
 		for _, row := range group.Authors {
-			table.Append([]string{row.Author, strconv.Itoa(row.Lines), row.Percent})
+			table1.Append([]string{group.Type, row.Author, strconv.Itoa(row.Lines), row.Percent})
 		}
-		table.Render()
 	}
+	table1.Render()
 
 	fmt.Println("\n## Lines by Type")
 	table2 := tablewriter.NewWriter(os.Stdout)
