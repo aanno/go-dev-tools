@@ -37,7 +37,8 @@ The tool used to be one ~850-line `main.go`; it's now split by concern:
 |-----------------|------------------------------------------------------------------|
 | `main.go`       | flag parsing/validation, top-level `run()` orchestration         |
 | `types.go`      | `FileType`, `FileStats`                                          |
-| `filetypes.go`  | path/extension-based categorization (`categorizeFile`, `isCodeFile`, `detectLanguage`, `shouldSkipDir`) |
+| `filetypes.go`  | extension/language tables (`codeExts`), `isCodeFile`, `detectLanguage`, `shouldSkipDir` |
+| `categorize.go` | ecosystem-agnostic `categorizeFile`: test/resource/build detection      |
 | `gitignore.go`  | hand-rolled `.gitignore` pattern matching                        |
 | `tracked.go`    | git-index-based "is this file tracked at all" check              |
 | `lines.go`      | `countLines` (reads a file) and `linesCountable` (the shared blank/comment heuristics, given any ordered slice of lines) |
@@ -90,6 +91,55 @@ multi-line-comment handling, not just per-line heuristics.
 Known range-mode limitation (acceptable for now, revisit if it matters):
 renames aren't tracked specially across the range, so a renamed-and-modified
 file may undercount lines recorded under its old path.
+
+## Categorization is ecosystem-agnostic, not a per-ecosystem if-chain
+
+`categorizeFile` (`categorize.go`) used to be Maven-specific: it looked for
+the literal substrings `/src/test/` and `/src/main/`, and everything else
+fell through to `Other`. It's now built from a handful of generic signals
+that happen to be exactly how most ecosystems mark test code and resources:
+
+- **Test signal**: a path segment exactly matching `test`/`tests`/
+  `__tests__`/`spec`/`specs`/`e2e`/`cypress`/`molecule` (`testSegments`), OR
+  a filename matching a test convention (`isTestFilename`): Go's `_test.go`,
+  Python's `test_*.py`/`*_test.py`/`conftest.py`, JS/TS's
+  `*.test.ts`/`*.spec.ts` (and `.js/.jsx/.tsx/.mjs/.cjs`), or the JVM's
+  `FooTest.java`/`FooTests.java` (checked case-*sensitively* so
+  `Latest.java` can't false-match `*Test.java` - a case-insensitive check
+  can't tell "La"+"test" from "Foo"+"Test").
+- **Resource signal**: a path segment exactly matching `resources`/
+  `resource`/`assets`/`static`/`public`/`templates` (`resourceSegments`).
+- Neither signal anchors to the repo root (segment membership, not a
+  root-relative prefix), so **monorepos need no special handling** - the
+  same rule matches a `packages/foo/src/main/java/...` or
+  `apps/bar/src/app/x.spec.ts` wherever it sits in the tree.
+- A file with no recognized source-language extension (`detectLanguage`
+  returns `"other"`) always stays `Other`, regardless of directory -
+  otherwise: test&&resource → `TestResources`, test → `TestCode`, resource
+  → `MainResources`, neither → `MainCode`.
+
+This one rule set is what makes Maven, Gradle, and sbt all work identically
+(they deliberately mirror Maven's `src/main`/`src/test`/`resources`
+layout) as well as Go, Python (+ maturin/Rust), and React/Angular/
+TypeScript/Playwright - see `categorize_test.go` for a case per ecosystem,
+built from real example trees. Known gap, accepted rather than risking a
+false-positive: sbt's own `project/*.scala` meta-build files read as
+`MainCode`/scala rather than build tooling, since a generic `project`
+segment rule would be too eager to false-match unrelated repos.
+
+`isBuildFile` (also `categorize.go`) is checked *before* any of the above
+and routes project/build plumbing to `Build`, regardless of test/resource
+signals: containers and compose files (`Dockerfile*`, `docker-compose*.yml`,
+and bare Compose-spec names like `compose.yaml`/`compose.override.yml` -
+Compose dropped the `docker-` prefix requirement, so both forms need
+matching), Podman Quadlet units (`.container`/`.pod`/`.volume`/`.network`/
+`.kube`/`.build`/`.image`), and build/project descriptors - either by
+extension alone (`.gradle`/`.kts`/`.sbt`/`.toml`/`.cfg`/`.ini` are
+essentially always build config) or by exact basename for descriptors whose
+extension is otherwise too generic to blanket-route (`pom.xml`,
+`setup.py`, `package.json`, `requirements.txt`, `.gitlab-ci.yml`, ...) or
+prefix (`.github/`, `tsconfig*.json`). `Build` absorbed the old standalone
+`Container` type - there's no `Container` constant any more.
 
 ## Mode/flag resolution (see `main()`)
 

@@ -6,99 +6,83 @@ import (
 )
 
 func shouldSkipDir(name string) bool {
-	skip := []string{"target", ".git", ".mvn", "node_modules", "dist", "build", ".idea", ".vscode"}
+	skip := []string{
+		"target", ".git", ".mvn", "node_modules", "dist", "build", ".idea", ".vscode",
+		// Python
+		"__pycache__", ".pytest_cache", "venv", ".venv",
+		// Java/Kotlin Gradle cache
+		".gradle",
+		// Ansible
+		"ansible_collections",
+		// JS/TS monorepo tool caches
+		".next", ".nuxt", ".angular", ".turbo", ".nx",
+		// Test-run artifacts (e.g. Playwright)
+		"test-results",
+	}
 	for _, s := range skip {
 		if name == s {
 			return true
 		}
 	}
-	return false
+	// Python packaging metadata dirs are named "<pkg>.egg-info".
+	return strings.HasSuffix(name, ".egg-info")
+}
+
+// codeExts is every extension isCodeFile and detectLanguage know about.
+// isCodeFile gates the file walk (see snapshot.go); detectLanguage feeds
+// categorize.go's categorizeFile.
+var codeExts = map[string]string{
+	".java": "java", ".kt": "kotlin", ".scala": "scala", ".groovy": "groovy",
+	".py": "python", ".rb": "ruby",
+	".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+	".ts": "typescript", ".tsx": "typescript",
+	".go": "go", ".rs": "rust",
+	".xml": "xml", ".properties": "properties",
+	".yaml": "yaml", ".yml": "yaml", ".json": "json",
+	".sh": "shell", ".bash": "shell", ".zsh": "shell",
+	".md": "markdown", ".txt": "text", ".rst": "text", ".adoc": "text",
+	".html": "html", ".scss": "scss", ".css": "css",
+	".j2": "jinja2",
+	// Build/project-descriptor-only extensions (see categorize.go's
+	// buildOnlyExts - any file with these is routed to Build regardless of
+	// its exact name).
+	".gradle": "gradle", ".kts": "kotlin", ".sbt": "sbt",
+	".toml": "toml", ".cfg": "ini", ".ini": "ini",
+	// Podman Quadlet unit extensions.
+	".container": "quadlet", ".pod": "quadlet", ".volume": "quadlet",
+	".network": "quadlet", ".kube": "quadlet", ".build": "quadlet", ".image": "quadlet",
+}
+
+// extensionlessCodeFiles is for build descriptors that don't have a
+// filepath.Ext Go recognizes as an extension at all (a single-dot dotfile
+// like ".ansible-lint" reports its whole name as the "extension").
+var extensionlessCodeFiles = map[string]bool{
+	".ansible-lint": true,
 }
 
 func isCodeFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	base := strings.ToLower(filepath.Base(path))
 
-	codeExts := []string{
-		".java", ".kt", ".scala", ".groovy",
-		".py", ".rb", ".js", ".ts", ".go", ".rs",
-		".xml", ".properties", ".yaml", ".yml", ".json",
-		".sh", ".bash", ".zsh",
-		".md", ".txt", ".rst", ".adoc",
+	if _, ok := codeExts[ext]; ok {
+		return true
+	}
+	if extensionlessCodeFiles[base] {
+		return true
 	}
 
-	for _, e := range codeExts {
-		if strings.HasSuffix(ext, e) {
-			return true
-		}
-	}
-
-	// Dockerfiles
+	// Dockerfiles have no extension of their own.
 	if strings.HasPrefix(base, "dockerfile") || strings.HasSuffix(base, ".dockerfile") ||
-		strings.HasPrefix(base, "docker-compose") {
+		strings.HasPrefix(base, "docker-compose") || strings.HasPrefix(base, "podman-compose") {
 		return true
 	}
 
 	return false
 }
 
-// categorizeFile determines a file's FileType and detected language from its
-// path alone (Maven standard layout awareness plus extension/name rules).
-func categorizeFile(path string) (FileType, string) {
-	// Normalize path separators
-	path = filepath.ToSlash(path)
-
-	// Check path patterns first (Maven standard layout)
-	if strings.Contains(path, "/src/test/") {
-		if strings.Contains(path, "/resources/") {
-			return TestResources, detectLanguage(path)
-		}
-		return TestCode, detectLanguage(path)
-	}
-
-	if strings.Contains(path, "/src/main/") {
-		if strings.Contains(path, "/resources/") {
-			return MainResources, detectLanguage(path)
-		}
-		return MainCode, detectLanguage(path)
-	}
-
-	// Check by extension
-	ext := strings.ToLower(filepath.Ext(path))
-	base := strings.ToLower(filepath.Base(path))
-
-	if ext == ".sh" || ext == ".bash" || ext == ".zsh" {
-		return Scripts, "shell"
-	}
-
-	if ext == ".md" || ext == ".txt" || ext == ".rst" || ext == ".adoc" {
-		return Documentation, "text"
-	}
-
-	if strings.HasPrefix(base, "dockerfile") || strings.HasSuffix(base, ".dockerfile") ||
-		strings.HasPrefix(base, "docker-compose") {
-		return Container, "docker"
-	}
-
-	// Check for other common patterns
-	if ext == ".xml" && strings.Contains(path, "/pom.xml") {
-		return Other, "maven"
-	}
-
-	// Default to other
-	return Other, detectLanguage(path)
-}
-
 func detectLanguage(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
-	langMap := map[string]string{
-		".java": "java", ".kt": "kotlin", ".scala": "scala", ".groovy": "groovy",
-		".py": "python", ".rb": "ruby", ".js": "javascript", ".ts": "typescript",
-		".go": "go", ".rs": "rust", ".xml": "xml", ".properties": "properties",
-		".yaml": "yaml", ".yml": "yaml", ".json": "json", ".md": "markdown",
-		".txt": "text", ".sh": "shell", ".bash": "shell",
-	}
-	if lang, ok := langMap[ext]; ok {
+	if lang, ok := codeExts[ext]; ok {
 		return lang
 	}
 	return "other"

@@ -10,8 +10,12 @@ const (
 	MainResources FileType = "main_resources"
 	Scripts       FileType = "scripts"
 	Documentation FileType = "documentation"
-	Container     FileType = "container"
-	Other         FileType = "other"
+	// Build covers project/build plumbing rather than application code:
+	// containers (Dockerfile, compose files), Podman Quadlet units, and
+	// build/project descriptors (pom.xml, build.gradle, Cargo.toml, CI
+	// config, ...). See categorize.go's isBuildFile.
+	Build FileType = "build"
+	Other FileType = "other"
 )
 
 // FileStats holds per-file statistics.
@@ -20,10 +24,10 @@ const (
 // disk), attributed to whichever author's git-blame covers the most lines
 // of that file.
 //
-// In range mode, Lines is the number of lines that author *added* to that
-// file within the given commit range (see rangemode.go) - a different
-// statistic from snapshot's "current ownership", computed from commit diffs
-// rather than blame/annotate.
+// In range mode, Lines is the number of lines still present at toCommit
+// that were last touched by that author within the given commit range (see
+// rangemode.go) - a different statistic from snapshot's "current
+// ownership at HEAD", scoped to a window of history rather than all of it.
 type FileStats struct {
 	Path     string
 	Type     FileType

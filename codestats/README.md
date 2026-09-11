@@ -9,17 +9,26 @@ A code analysis tool that:
 * Extracts author information from git history
 * Aggregates statistics with percentages
 
-Key categorization logic for Maven standard layout:
+Key categorization logic (ecosystem-agnostic, works the same in a monorepo
 
-* Test code: **/src/test/java/**, **/src/test/kotlin/**, etc.
-  (language-specific test dirs)
-* Main code: **/src/main/java/**, **/src/main/kotlin/**, etc.
-* Test resources: **/src/test/resources/**
-* Main resources: **/src/main/resources/**
-* Scripts: *.sh,*.bash, *.zsh
-* Documentation: *.md,*.txt, *.rst
-* Container: Dockerfile*, *.dockerfile, docker-compose*.yml
-* Other: Everything else
+* see [CLAUDE.md](CLAUDE.md) for the full rule set and per-ecosystem
+coverage table):
+
+* Test code: a directory named `test`/`tests`/`__tests__`/`spec`/`specs`/
+  `e2e`/`cypress`/`molecule` anywhere in the path, or a filename matching
+  the ecosystem's test convention (Go's `_test.go`, Python's `test_*.py`,
+  JS/TS's `*.test.ts`/`*.spec.ts`, the JVM's `FooTest.java`, ...)
+* Main code: any other file with a recognized source-language extension
+* Test/main resources: as above, but under a `resources`/`assets`/`static`/
+  `public`/`templates` directory
+* Scripts: `*.sh`, `*.bash`, `*.zsh`
+* Documentation: `*.md`, `*.txt`, `*.rst`, `*.adoc`
+* Build: project/build plumbing rather than application code - containers
+  and compose files (`Dockerfile*`, `docker-compose*.yml`, bare
+  `compose.yaml`), Podman Quadlet units (`*.container`, `*.pod`, ...), and
+  build/project descriptors (`pom.xml`, `build.gradle`, `build.sbt`,
+  `Cargo.toml`, `package.json`, CI config, ...)
+* Other: an extension this tool doesn't recognize at all
 
 ## Implementation
 
@@ -34,7 +43,9 @@ The tool is now complete with:
 * Sorted, grouped-by-type output (lines desc, then alpha)
 * CSV + JSON output with overwrite protection (checked before processing)
 * Proper error logging per file
-* Maven standard layout detection
+* Ecosystem-agnostic categorization (Maven/Gradle/sbt, Go, Python (+
+  maturin/Rust), React/Angular/TypeScript, Ansible, containers/compose/
+  Quadlet), monorepos included for free
 * `.gitignore` matching plus a "must be tracked by git" filter
 * Split across several files by concern - see [CLAUDE.md](CLAUDE.md)
 
@@ -48,18 +59,14 @@ the grouped output shape).
 
 ### Phase 2
 
-1. Support not only maven layouts; categorisation in TYPEs should at least
-   also work for:
-   * react and angular projects (simple and monorepos)
-   * python projects (simple and monorepos)
-   * python/maturin projects (that include python and rust sources)
-   * go projects (simple and monorepos)
-   * java gradle projects
-   * scala sbt projects
+1. Done - see [CLAUDE.md](CLAUDE.md) for the categorization rule set and
+   per-ecosystem coverage table (react/angular, python, python/maturin, go,
+   java gradle, scala sbt, ansible - simple and monorepo alike - plus the
+   new `build` category for containers/compose/Quadlet/build descriptors).
    * ansible projects (simple and monorepos)
 2. In range mode, also calculate deleted lines
    * count them separate
-   * for each author, also introduce a new column with `sum=<lines_added> - <lines_deleted_that_originate_from_this_author>
+   * for each author, also introduce a new column with `sum=<lines_added> - <lines_deleted_that_originate_from_this_author>`
 
 Example react simple project layout:
 
@@ -88,7 +95,6 @@ Example react simple project layout:
 │   │   │   └── fira-sans (*.woff2 and other font formats)
 │   │   └── icons (*.svg and other image formats)
 │   ├── components
-│   │   ├── bzr-config
 │   │   ├── fehlerliste
 │   │   ├── filter-templates
 │   │   ├── footer
@@ -123,18 +129,14 @@ Example react simple project layout:
 │   │   └── data-table
 │   │       └── utils
 │   ├── i18n
-│   │   └── translations
+│   │   └── translations (*.json)
 │   ├── layouts (*.scss *.tsx *.test.tsx)
 │   ├── pages
 │   │   ├── batchjob-monitor
-│   │   ├── bzr-config
-│   │   ├── bzrs
-│   │   ├── dashboard-arbeitsstand
-│   │   ├── datenimport-konfigurationen
+│   │   ├── dashboard
 │   │   ├── detailansicht
 │   │   ├── error
 │   │   ├── export-overview
-│   │   ├── mandanten-bzr-config
 │   │   └── navigationsansicht
 │   ├── routes
 │   │   └── loaders
