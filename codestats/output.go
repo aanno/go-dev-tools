@@ -25,6 +25,30 @@ func checkOutputPaths(outputPath string) error {
 	return nil
 }
 
+// intPtrStr renders a *int as CSV/table cell text: "" when nil (snapshot
+// mode, not applicable), the number otherwise (including a real 0).
+func intPtrStr(p *int) string {
+	if p == nil {
+		return ""
+	}
+	return strconv.Itoa(*p)
+}
+
+// groupDeletedSum sums a TypeGroup's per-author Deleted/Sum into a
+// type-level total, for the group's "(total)" row. ok is false in
+// snapshot mode (no author in the group has Deleted set).
+func groupDeletedSum(g TypeGroup) (deleted, sum int, ok bool) {
+	for _, a := range g.Authors {
+		if a.Deleted == nil {
+			continue
+		}
+		ok = true
+		deleted += *a.Deleted
+		sum += *a.Sum
+	}
+	return deleted, sum, ok
+}
+
 func outputCSV(stats *AggregatedStats, outputPath string) error {
 	csvPath := filepath.Join(outputPath, "codestats.csv")
 
@@ -37,67 +61,63 @@ func outputCSV(stats *AggregatedStats, outputPath string) error {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	if err := writer.Write([]string{"category", "type", "author", "lines", "percent"}); err != nil {
+	rangeMode := stats.Total.Deleted != nil
+
+	header := []string{"category", "type", "author", "lines", "percent"}
+	if rangeMode {
+		header = append(header, "deleted", "sum")
+	}
+	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("failed to write CSV header: %w", err)
+	}
+
+	row := func(base []string, deleted, sum *int) []string {
+		if rangeMode {
+			return append(base, intPtrStr(deleted), intPtrStr(sum))
+		}
+		return base
 	}
 
 	// By author and type, grouped: one total row per type, then its authors
 	// with percent relative to that type's total.
 	for _, group := range stats.ByAuthorAndType {
-		if err := writer.Write([]string{"by_author_and_type_total", group.Type, "",
-			strconv.Itoa(group.TotalLines), "100.00%"}); err != nil {
+		gDeleted, gSum, gOK := groupDeletedSum(group)
+		var gd, gs *int
+		if gOK {
+			gd, gs = &gDeleted, &gSum
+		}
+		if err := writer.Write(row([]string{"by_author_and_type_total", group.Type, "",
+			strconv.Itoa(group.TotalLines), "100.00%"}, gd, gs)); err != nil {
 			return fmt.Errorf("failed to write CSV: %w", err)
 		}
-		for _, row := range group.Authors {
-			if err := writer.Write([]string{"by_author_and_type", group.Type, row.Author,
-				strconv.Itoa(row.Lines), row.Percent}); err != nil {
+		for _, r := range group.Authors {
+			if err := writer.Write(row([]string{"by_author_and_type", group.Type, r.Author,
+				strconv.Itoa(r.Lines), r.Percent}, r.Deleted, r.Sum)); err != nil {
 				return fmt.Errorf("failed to write CSV: %w", err)
 			}
 		}
 	}
 
 	// By type
-	for _, row := range stats.ByType {
-		if err := writer.Write([]string{"by_type", row.Type, "",
-			strconv.Itoa(row.Lines), row.Percent}); err != nil {
+	for _, r := range stats.ByType {
+		if err := writer.Write(row([]string{"by_type", r.Type, "",
+			strconv.Itoa(r.Lines), r.Percent}, r.Deleted, r.Sum)); err != nil {
 			return fmt.Errorf("failed to write CSV: %w", err)
 		}
 	}
 
 	// By author
-	for _, row := range stats.ByAuthor {
-		if err := writer.Write([]string{"by_author", "", row.Author,
-			strconv.Itoa(row.Lines), row.Percent}); err != nil {
+	for _, r := range stats.ByAuthor {
+		if err := writer.Write(row([]string{"by_author", "", r.Author,
+			strconv.Itoa(r.Lines), r.Percent}, r.Deleted, r.Sum)); err != nil {
 			return fmt.Errorf("failed to write CSV: %w", err)
 		}
 	}
 
 	// Total
-	if err := writer.Write([]string{"total", "", "", strconv.Itoa(stats.Total.Lines), "100.00%"}); err != nil {
+	if err := writer.Write(row([]string{"total", "", "", strconv.Itoa(stats.Total.Lines), "100.00%"},
+		stats.Total.Deleted, stats.Total.Sum)); err != nil {
 		return fmt.Errorf("failed to write CSV: %w", err)
-	}
-
-	// Deletions (range mode only) - kept in the same 5-column shape rather
-	// than widening the schema: "lines" carries whichever single number
-	// each category is about (a deleted count, or the net added-minus-
-	// deleted sum), distinguished by the category label.
-	if stats.Deletions != nil {
-		for _, row := range stats.Deletions.ByType {
-			if err := writer.Write([]string{"deleted_by_type", row.Type, "", strconv.Itoa(row.LinesDeleted), ""}); err != nil {
-				return fmt.Errorf("failed to write CSV: %w", err)
-			}
-		}
-		for _, row := range stats.Deletions.ByAuthor {
-			if err := writer.Write([]string{"deleted_by_author", "", row.Author, strconv.Itoa(row.LinesDeleted), ""}); err != nil {
-				return fmt.Errorf("failed to write CSV: %w", err)
-			}
-			if err := writer.Write([]string{"net_sum_by_author", "", row.Author, strconv.Itoa(row.Sum), ""}); err != nil {
-				return fmt.Errorf("failed to write CSV: %w", err)
-			}
-		}
-		if err := writer.Write([]string{"deleted_total", "", "", strconv.Itoa(stats.Deletions.Total), ""}); err != nil {
-			return fmt.Errorf("failed to write CSV: %w", err)
-		}
 	}
 
 	log.Printf("CSV written to %s", csvPath)
@@ -121,11 +141,17 @@ func outputJSON(stats *AggregatedStats, outputPath string) error {
 }
 
 func outputTable(stats *AggregatedStats) {
+	rangeMode := stats.Total.Deleted != nil
+
 	fmt.Println("\n=== CODE STATISTICS ===")
 
 	fmt.Println("\n## Lines by Author and Type")
 	table1 := tablewriter.NewWriter(os.Stdout)
-	table1.SetHeader([]string{"Type", "Author", "Lines", "%"})
+	header1 := []string{"Type", "Author", "Lines", "%"}
+	if rangeMode {
+		header1 = append(header1, "Deleted", "Sum")
+	}
+	table1.SetHeader(header1)
 	table1.SetBorder(false)
 	table1.SetAutoWrapText(false)
 	// The Type column repeats the same value for every row in a group;
@@ -133,65 +159,69 @@ func outputTable(stats *AggregatedStats) {
 	// section reads as a single table with a visual break per group
 	// instead of one table per type.
 	table1.SetAutoMergeCellsByColumnIndex([]int{0})
+	appendRow1 := func(rowType, author string, lines int, percent string, deleted, sum *int) {
+		r := []string{rowType, author, strconv.Itoa(lines), percent}
+		if rangeMode {
+			r = append(r, intPtrStr(deleted), intPtrStr(sum))
+		}
+		table1.Append(r)
+	}
 	for _, group := range stats.ByAuthorAndType {
-		table1.Append([]string{group.Type, "(total)", strconv.Itoa(group.TotalLines), "100.00%"})
-		for _, row := range group.Authors {
-			table1.Append([]string{group.Type, row.Author, strconv.Itoa(row.Lines), row.Percent})
+		gDeleted, gSum, gOK := groupDeletedSum(group)
+		var gd, gs *int
+		if gOK {
+			gd, gs = &gDeleted, &gSum
+		}
+		appendRow1(group.Type, "(total)", group.TotalLines, "100.00%", gd, gs)
+		for _, r := range group.Authors {
+			appendRow1(group.Type, r.Author, r.Lines, r.Percent, r.Deleted, r.Sum)
 		}
 	}
 	table1.Render()
 
 	fmt.Println("\n## Lines by Type")
 	table2 := tablewriter.NewWriter(os.Stdout)
-	table2.SetHeader([]string{"Type", "Lines", "%"})
+	header2 := []string{"Type", "Lines", "%"}
+	if rangeMode {
+		header2 = append(header2, "Deleted", "Sum")
+	}
+	table2.SetHeader(header2)
 	table2.SetBorder(false)
 	table2.SetAutoWrapText(false)
-	for _, row := range stats.ByType {
-		table2.Append([]string{row.Type, strconv.Itoa(row.Lines), row.Percent})
+	for _, r := range stats.ByType {
+		row := []string{r.Type, strconv.Itoa(r.Lines), r.Percent}
+		if rangeMode {
+			row = append(row, intPtrStr(r.Deleted), intPtrStr(r.Sum))
+		}
+		table2.Append(row)
 	}
 	table2.Render()
 
+	// In range mode, this table also stands in for what would otherwise be
+	// a separate "deleted lines by author" table - see applyDeletions's
+	// sort-by-Sum for this slice.
 	fmt.Println("\n## Lines by Author")
 	table3 := tablewriter.NewWriter(os.Stdout)
-	table3.SetHeader([]string{"Author", "Lines", "%"})
+	header3 := []string{"Author", "Lines", "%"}
+	if rangeMode {
+		header3 = append(header3, "Deleted", "Sum")
+	}
+	table3.SetHeader(header3)
 	table3.SetBorder(false)
 	table3.SetAutoWrapText(false)
-	for _, row := range stats.ByAuthor {
-		table3.Append([]string{row.Author, strconv.Itoa(row.Lines), row.Percent})
+	for _, r := range stats.ByAuthor {
+		row := []string{r.Author, strconv.Itoa(r.Lines), r.Percent}
+		if rangeMode {
+			row = append(row, intPtrStr(r.Deleted), intPtrStr(r.Sum))
+		}
+		table3.Append(row)
 	}
 	table3.Render()
 
-	fmt.Printf("\n## Total Lines: %d\n", stats.Total.Lines)
-
-	if stats.Deletions != nil {
-		outputDeletionsTable(stats.Deletions)
+	if rangeMode {
+		fmt.Printf("\n## Total Lines: %d (Deleted: %d, Sum: %d)\n",
+			stats.Total.Lines, *stats.Total.Deleted, *stats.Total.Sum)
+	} else {
+		fmt.Printf("\n## Total Lines: %d\n", stats.Total.Lines)
 	}
-}
-
-// outputDeletionsTable renders the range-mode-only deleted-lines section:
-// how many lines originally attributed to each author (or type) were
-// deleted somewhere within the range, and each author's net Sum once
-// that's subtracted from their surviving line count.
-func outputDeletionsTable(d *DeletionStats) {
-	fmt.Println("\n## Deleted Lines by Type (range mode)")
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Type", "Deleted"})
-	table.SetBorder(false)
-	table.SetAutoWrapText(false)
-	for _, row := range d.ByType {
-		table.Append([]string{row.Type, strconv.Itoa(row.LinesDeleted)})
-	}
-	table.Render()
-
-	fmt.Println("\n## Deleted Lines by Author (Sum = Added - Deleted)")
-	table2 := tablewriter.NewWriter(os.Stdout)
-	table2.SetHeader([]string{"Author", "Added", "Deleted", "Sum"})
-	table2.SetBorder(false)
-	table2.SetAutoWrapText(false)
-	for _, row := range d.ByAuthor {
-		table2.Append([]string{row.Author, strconv.Itoa(row.LinesAdded), strconv.Itoa(row.LinesDeleted), strconv.Itoa(row.Sum)})
-	}
-	table2.Render()
-
-	fmt.Printf("\n## Total Deleted Lines: %d\n", d.Total)
 }

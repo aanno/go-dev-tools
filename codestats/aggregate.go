@@ -7,10 +7,21 @@ import (
 
 // AuthorInType is one author's share of lines within a single TypeGroup;
 // Percent is relative to that group's TotalLines, not the grand total.
+//
+// Deleted and Sum are nil in snapshot mode, where "deleted" has no
+// meaning. In range mode (see deletions.go's applyDeletions), every row
+// gets both set - even to 0 - so a range-mode run's JSON never mixes rows
+// that have the fields with rows that don't. They're pointers rather than
+// plain ints specifically so a real 0 (range mode, no deletions) still
+// serializes as "deleted": 0 instead of being indistinguishable from "not
+// applicable" under omitempty - that's what keeps range mode's JSON a
+// strict superset of snapshot mode's, rather than a different shape.
 type AuthorInType struct {
 	Author  string `json:"author"`
 	Lines   int    `json:"lines"`
 	Percent string `json:"percent"`
+	Deleted *int   `json:"deleted,omitempty"`
+	Sum     *int   `json:"sum,omitempty"`
 }
 
 // TypeGroup is "Lines by Author and Type", grouped by Type.
@@ -20,34 +31,44 @@ type TypeGroup struct {
 	Authors    []AuthorInType `json:"authors"`
 }
 
+// TypeStats: Deleted/Sum follow the same nil-in-snapshot-mode convention
+// as AuthorInType.
 type TypeStats struct {
 	Type    string `json:"type"`
 	Lines   int    `json:"lines"`
 	Percent string `json:"percent"`
+	Deleted *int   `json:"deleted,omitempty"`
+	Sum     *int   `json:"sum,omitempty"`
 }
 
+// AuthorStats: Deleted/Sum follow the same nil-in-snapshot-mode convention
+// as AuthorInType. In range mode this row also stands in for what would
+// otherwise be a separate "deleted lines by author" table - see
+// applyDeletions's re-sort by Sum.
 type AuthorStats struct {
 	Author  string `json:"author"`
 	Lines   int    `json:"lines"`
 	Percent string `json:"percent"`
+	Deleted *int   `json:"deleted,omitempty"`
+	Sum     *int   `json:"sum,omitempty"`
 }
 
 type TotalStats struct {
-	Lines int `json:"total_lines"`
+	Lines   int  `json:"total_lines"`
+	Deleted *int `json:"total_deleted,omitempty"`
+	Sum     *int `json:"total_sum,omitempty"`
 }
 
-// AggregatedStats for output
+// AggregatedStats for output. It's built once by aggregateStats from the
+// engine-agnostic []FileStats (surviving lines only); range mode then
+// calls applyDeletions on the result to fold deleted-line counts in - see
+// deletions.go. Nothing here is mode-specific by construction; a caller
+// that skips applyDeletions just gets nil Deleted/Sum throughout.
 type AggregatedStats struct {
 	ByAuthorAndType []TypeGroup   `json:"by_author_and_type"`
 	ByType          []TypeStats   `json:"by_type"`
 	ByAuthor        []AuthorStats `json:"by_author"`
 	Total           TotalStats    `json:"total"`
-	// Deletions is populated only in range mode (see deletions.go and
-	// main.go's range branch) - nil in snapshot mode, where "deleted"
-	// within a range has no meaning. outputCSV/outputJSON/outputTable all
-	// check for nil rather than taking a mode argument, keeping this file
-	// mode-agnostic.
-	Deletions *DeletionStats `json:"deletions,omitempty"`
 }
 
 func aggregateStats(stats []FileStats) *AggregatedStats {

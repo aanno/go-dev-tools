@@ -99,9 +99,8 @@ file may undercount lines recorded under its old path.
 line". `computeDeletionStats` answers a different question: "of the lines
 that got deleted somewhere within this range, who originally wrote them?" -
 crediting the deletion to whoever wrote the line, not to whoever deleted
-it. Combined with the surviving-line count (`AggregatedStats.ByAuthor`,
-passed in as `survivingByAuthor`), that gives each author a net `Sum =
-LinesAdded - LinesDeleted`.
+it. It returns a `*DeletionCounts` (three maps: `ByAuthor`, `ByType`,
+`ByAuthorAndType`) - raw tallies, no notion of "surviving" yet.
 
 Mechanism: `deletedHunks` runs one `git log -p --unified=0 --first-parent`
 over the whole range and keeps only each diff hunk's header (old-start,
@@ -115,23 +114,54 @@ the whole range, not one per file like `computeRangeStats` - a real cost on
 a range with heavy churn, called out in `computeDeletionStats`'s doc
 comment.
 
-`AggregatedStats.Deletions` is a `*DeletionStats`, populated only in
-`main.go`'s range branch (nil in snapshot mode, where "deleted within a
-range" has no meaning) - `output.go` checks for nil rather than taking a
-mode argument, keeping it structurally mode-agnostic even though only one
-mode ever populates the field.
+`applyDeletions` (`main.go`'s range branch only) folds a `*DeletionCounts`
+into an already-built `*AggregatedStats`, setting `Deleted`/`Sum` (both
+`*int`) on every existing row in `ByAuthorAndType`/`ByType`/`ByAuthor`, and
+*adding* a new row (`Lines: 0`) for an author or type that has deletions
+but no surviving lines at all - Peter in the worked example below only
+shows up at all because of this. It also re-sorts `ByAuthor` by `Sum`
+descending, since that one table now does double duty as what would
+otherwise be a separate "who's ahead net of deletions" table - the plain
+`Lines`-sorted `ByAuthor` and a dedicated deleted-lines table used to be
+two different sections; they're deliberately merged now. `ByAuthorAndType`
+and `ByType` keep their existing `Lines`-descending sort.
+
+Never called (snapshot mode), `Deleted`/`Sum` stay nil throughout - that's
+what makes range mode's JSON output a strict superset of snapshot mode's
+rather than a different shape (same top-level keys, same base fields;
+range mode just adds `deleted`/`sum` alongside `lines`/`percent`
+everywhere). `Deleted`/`Sum` are pointers rather than plain ints
+specifically so a real, meaningful `0` still serializes as `"deleted": 0`
+instead of vanishing under `omitempty` and looking identical to "not
+applicable" (snapshot mode) - `output.go`'s CSV/table writers key off
+`stats.Total.Deleted != nil` for the same "is this range mode" check,
+rather than taking a mode argument.
 
 A line can be "not counted as surviving" for a reason that has nothing to
 do with deletion: `computeRangeStats` only counts a line if its *last*
 touch falls within (fromCommit, toCommit] (see boundary exclusion, above) -
 a line added right at the boundary commit itself and never touched again
 is excluded from `ByAuthor`, even though it's still in the file. That
-author can then show up in the deletions table with `LinesAdded: 0` and a
-negative `Sum`, which looks alarming until you remember `LinesAdded` here
-means "credited as surviving *within this window*", not "still exists in
-the file at all". `deletions_test.go`'s three-commit fixture (Alice adds
-two lines, Bob adds one, Carol deletes one of Alice's) exercises exactly
-this interaction - read it before changing either engine.
+author can then show up with `Lines: 0` and a negative `Sum`, which looks
+alarming until you remember `Lines` here means "credited as surviving
+*within this window*", not "still exists in the file at all".
+`deletions_test.go`'s three-commit fixture (Alice adds two lines, Bob adds
+one, Carol deletes one of Alice's) exercises exactly this interaction -
+read it before changing either engine.
+
+**Self-churn is excluded on purpose.** A deletion only counts when the
+deleting commit's author *differs* from the line's original author -
+`deletedHunks` captures each deleting commit's own author (`%an`, right
+alongside its hash) precisely so `computeDeletionStats` can compare it
+against the blamed original author and skip a match. Without this, a CI
+bot bumping a version string 30 times across a range (each bump deleting
+its *own* previous line) would rack up a `Deleted` count in the dozens
+against a tiny surviving `Lines` (whatever its last bump left behind,
+deduped) - a large negative `Sum` that reflects repetitive self-editing
+churn, not lost work or another author's contribution displacing theirs.
+`TestComputeDeletionStats_SelfOverwriteExcluded` is the regression test
+for exactly this (modeled on a real report of GitLab CI's version-bump
+commits producing a wildly negative `Sum` before this exclusion existed).
 
 Same known limitation as above: a rename isn't followed back through
 `blameLinesAt`, so a deleted line that had been renamed to a new path
